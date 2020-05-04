@@ -1,0 +1,9 @@
+.vscode
+skills
+__pycache__/
+*.py[cod]
+venv
+.venv
+*egg*
+dist
+build
