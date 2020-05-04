@@ -154,4 +154,5 @@ class BaseSkill(metaclass=ABCMeta):
         res = {"sessionId": session_id, "siteId": site_id,
                "intentName": intent_name, "text": response_message, "lang": lang if lang else "en_GB"}
 
-        return json.dumps(res)
+        return json.dumps(res, ensure_ascii=False).encode('utf8')
+

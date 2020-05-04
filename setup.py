@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="hss_skill",
-    version="0.1.0",
+    version="0.1.1",
     author="Patrick Fial",
     author_email="pfial@me.com",
     description="Library for creating voice assistant skills for the hermes skill server (hss-server)",
