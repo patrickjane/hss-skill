@@ -5,9 +5,9 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="hss_skill",
-    version="0.1.1",
+    version="0.1.2",
     author="Patrick Fial",
-    author_email="pfial@me.com",
+    author_email="mg.m@gmx.net",
     description="Library for creating voice assistant skills for the hermes skill server (hss-server)",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -19,7 +19,7 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
-        #'rpyc>=4.1.5',
+        'rpyc',
     ],
     python_requires='>=3.6',
 )
