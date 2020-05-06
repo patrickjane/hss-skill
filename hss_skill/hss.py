@@ -34,6 +34,7 @@ class BaseSkill(metaclass=ABCMeta):
 
         self.args = self.parse_args()
         self.config = None
+        self.debug = False
 
         try:
             root_path = os.path.abspath(sys.modules['__main__'].__file__).replace("main.py", "")
@@ -48,6 +49,9 @@ class BaseSkill(metaclass=ABCMeta):
         self.name = self.args["skill-name"]
         self.port = int(self.args["port"]) if "port" in self.args else 18861
         self.log = logging.getLogger("skill:{}".format(self.name))
+
+        if "debug" in self.args:
+            self.debug = True
 
     # --------------------------------------------------------------------------
     # parse_args
