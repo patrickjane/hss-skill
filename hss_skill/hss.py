@@ -84,8 +84,6 @@ class BaseSkill(metaclass=ABCMeta):
             rpc.RpcService(self), port=self.port, logger=rpc_logger)
         self.rpc_server.start()
 
-        self.log.info("Up.")
-
     # --------------------------------------------------------------------------
     # on_request
     # --------------------------------------------------------------------------
