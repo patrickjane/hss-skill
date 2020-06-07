@@ -13,6 +13,8 @@ import configparser
 import os
 import sys
 import json
+import asyncio
+
 from abc import ABCMeta, abstractmethod
 
 from hss_skill import logger
@@ -35,6 +37,7 @@ class BaseSkill(metaclass=ABCMeta):
         self.args = self.parse_args()
         self.config = None
         self.debug = False
+        self.timer_task = None
 
         try:
             root_path = os.path.abspath(sys.modules['__main__'].__file__).replace("main.py", "")
@@ -47,7 +50,8 @@ class BaseSkill(metaclass=ABCMeta):
             self.config.read(self.config_path)
 
         self.name = self.args["skill-name"]
-        self.port = int(self.args["port"]) if "port" in self.args else 18861
+        self.port = int(self.args["port"])
+        self.parent_port = int(self.args["parent-port"]) if "parent-port" in self.args else None
         self.log = logging.getLogger("skill:{}".format(self.name))
 
         if "debug" in self.args:
@@ -77,25 +81,91 @@ class BaseSkill(metaclass=ABCMeta):
     # --------------------------------------------------------------------------
 
     def run(self):
-        rpc_logger = logging.getLogger('rpc')
-        rpc_logger.setLevel(level=logging.ERROR)
+        self.rpc = rpc.RpcServer(self.port, self)
+        self.rpc_client = rpc.RpcClient(self.parent_port)
 
-        self.rpc_server = rpc.RpcServer.create_server(
-            rpc.RpcService(self), port=self.port, logger=rpc_logger)
-        self.rpc_server.start()
+        try:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self.rpc_client.connect())
+            loop.run_until_complete(self.rpc.start())
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            if e and len(str(e)):
+                self.log.error("Got exception: {}".format(e))
+        finally:
+            self.log.info("Bye.")
+
+
+    # --------------------------------------------------------------------------
+    # timer
+    # --------------------------------------------------------------------------
+
+    async def timer(self, timeout, callback, user = None, reschedule = False):
+        if self.timer_task and not reschedule:
+            self.log.error("Cannot schedule timer, timer already active!")
+            return
+
+        if self.timer_task:
+            await self.cancel_timer(strict = False)
+
+        self.log.debug("Timer scheduled with delay of {} seconds".format(timeout))
+
+        loop = asyncio.get_event_loop()
+
+        self.timer_task = loop.create_task(self.timer_executor(timeout, callback, user))
+
+    # --------------------------------------------------------------------------
+    # cancel timer (async)
+    # --------------------------------------------------------------------------
+
+    async def cancel_timer(self, strict = True):
+        if not self.timer_task:
+            if strict:
+                self.log.error("Can't cancel timer, no timer is active!")
+            return
+
+        self.timer_task.cancel()
+
+        try:
+            await self.timer_task
+        except asyncio.CancelledError as e:
+            pass
+
+        self.timer_task = None
+
+        self.log.debug("Timer cancelled")
+
+    # --------------------------------------------------------------------------
+    # timer_fn (async)
+    # --------------------------------------------------------------------------
+
+    async def timer_executor(self, timeout, callback, user):
+        await asyncio.sleep(timeout)
+
+        self.timer_task = None
+
+        if user:
+            await callback(user)
+        else:
+            await callback()
+
+    # --------------------------------------------------------------------------
+    # dispatch_rpc_request
+    # --------------------------------------------------------------------------
+
+    async def dispatch_rpc_request(self, command, payload):
+        if command == 'get_intentlist':
+            return await self.get_intentlist()
+
+        elif command == 'handle':
+            return await self.on_request(payload)
 
     # --------------------------------------------------------------------------
     # on_request
     # --------------------------------------------------------------------------
 
-    def on_request(self, payload):
-        try:
-            request = json.loads(payload)
-        except Exception as e:
-            self.log.error(
-                "Failed to parse JSON request, must skip request ({})".format(e))
-            return False
-
+    async def on_request(self, request):
         if not "intent" in request or not "intentName" in request["intent"]:
             self.log.error("Received message without 'intentName', must skip")
             return False
@@ -130,14 +200,18 @@ class BaseSkill(metaclass=ABCMeta):
                     "Failed to parse slots in JSON request, must skip request ({})".format(e))
                 return False
 
-        return self.handle(request, session_id, site_id, intent_name, slots_dict)
+        return await self.handle(request, session_id, site_id, intent_name, slots_dict)
+
+    # -------------------------------------------------------------------------
+    # server -> skill RPC
+    # -------------------------------------------------------------------------
 
     # --------------------------------------------------------------------------
     # handle (abstract)
     # --------------------------------------------------------------------------
 
     @abstractmethod
-    def handle(self, request, session_id, site_id, intent_name, slots):
+    async def handle(self, request, session_id, site_id, intent_name, slots):
         pass
 
     # --------------------------------------------------------------------------
@@ -145,16 +219,64 @@ class BaseSkill(metaclass=ABCMeta):
     # --------------------------------------------------------------------------
 
     @abstractmethod
-    def get_intentlist(self):
+    async def get_intentlist(self):
         pass
+
+    # -------------------------------------------------------------------------
+    # handle response helpers
+    # -------------------------------------------------------------------------
 
     # -------------------------------------------------------------------------
     # done
     # -------------------------------------------------------------------------
 
-    def done(self, session_id, site_id, intent_name, response_message, lang):
-        res = {"sessionId": session_id, "siteId": site_id,
-               "intentName": intent_name, "text": response_message, "lang": lang if lang else "en_GB"}
+    def answer(self, session_id, site_id, response_message, lang = None):
+        return {
+                "sessionId": session_id,
+                "siteId": site_id,
+                "text": response_message,
+                "lang": lang if lang else "en_GB"
+            }
 
-        return json.dumps(res, ensure_ascii=False).encode('utf8')
+    # -------------------------------------------------------------------------
+    # followup
+    # -------------------------------------------------------------------------
+
+    def followup(self, session_id, site_id,  question, lang = None, intent_filter = None):
+        return {
+                "sessionId": session_id,
+                "siteId": site_id,
+                "question": question,
+                "lang": lang if lang else "en_GB",
+                "intentFilter": intent_filter if intent_filter else None
+            }
+
+    # -------------------------------------------------------------------------
+    # skill -> server RPC
+    # -------------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------
+    # say
+    # -------------------------------------------------------------------------
+
+    async def say(self, text, siteId = None, lang = None):
+        await self.rpc_client.execute("say",
+                                    {
+                                        "text": text,
+                                        "lang": lang if lang else "en_GB",
+                                        "siteId": siteId if siteId else None
+                                    })
+
+    # -------------------------------------------------------------------------
+    # ask
+    # -------------------------------------------------------------------------
+
+    async def ask(self, text, siteId = None, lang = None, intent_filter = None):
+        await self.rpc_client.execute("ask",
+                                    {
+                                        "text": text,
+                                        "lang": lang if lang else "en_GB",
+                                        "siteId": siteId if siteId else None,
+                                        "intentFilter": intent_filter if intent_filter else None
+                                    })
 
