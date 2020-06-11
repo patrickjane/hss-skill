@@ -23,7 +23,7 @@ class Logger:
 
         if file_name == None:
             logging.basicConfig(level=level,
-                                format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+                                format='%(levelname)s:%(name)s: %(message)s')
         else:
             logging.basicConfig(filename=file_name,
                                 level=level,
