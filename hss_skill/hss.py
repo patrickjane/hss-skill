@@ -206,11 +206,11 @@ class BaseSkill(metaclass=ABCMeta):
     # -------------------------------------------------------------------------
 
     # --------------------------------------------------------------------------
-    # get_intentlist (abstract)
+    # handle (abstract)
     # --------------------------------------------------------------------------
 
     @abstractmethod
-    async def get_intentlist(self):
+    async def handle(self, request, session_id, site_id, intent_name, slots):
         pass
 
     # -------------------------------------------------------------------------
