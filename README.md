@@ -16,7 +16,7 @@ Simply use `pip`:
 # Overview
 The `hss_skill` package contains tools for fast and easy development of skills for the [Hermes Skill Server](https://github.com/patrickjane/hss-server). The goal is to let skill developers only care about their own skill implementation, while the internal stuff (communication with the skill-server, reading configuration, etc) is provided out-of-the-box by the `hss_skill` package.
 
-The package provides a base class for skills `BaseSkill` which does all the incovenient stuff, like communication with the skill server, reading configuration file etc.    
+The package provides a base class for skills `BaseSkill` which does all the incovenient stuff, like communication with the skill server, reading configuration file etc.
 
 # Getting started
 
@@ -28,6 +28,15 @@ Your skill implementation must provide the following components:
 - your skill implementation (e.g. `myskill.py`)
 - `requirements.txt` file containing python dependencies, at least `hss_skill`
 - [optional] `config.ini.default` file containing your skill's configuration (default) parameters
+
+In addition, for interaction with `rhasspy` voice assistant:
+
+- [optional] `sentences.ini` containing the sentences `rhasspy` should use (only YOUR SKILLs sentences)
+- [optional] `slots.json` containing slot definitions your skill uses
+
+If `sentences.ini` is provided, `hss-cli` will register the sentences at `rhasspy` upon skill installation, and trigger `rhasspy` for training.
+
+Same applies to `slots.json`.
 
 ## Boilerplate
 
@@ -44,7 +53,7 @@ if __name__ == "__main__":
 Your `requirements.txt` could look like:
 
 ```
-hss_skill>=0.4.0
+hss_skill>=0.4.2
 certifi
 geopy>=1.20.0
 requests>=2.22.0
@@ -62,6 +71,24 @@ Usually, the parameters `intent_name` and `slots` might be sufficient, however t
 
 The implementation of this method should *usually* return with the execution of either `BaseSkill.answer` or `BaseSkill.followup` to finish intent handling (see below).
 
+
+### Example
+
+A minimal example of a skill (myskill.py) might look as:
+
+
+```
+from hss_skill import hss
+
+class MoodSkill(hss.BaseSkill):
+    def __init__(self):
+        super().__init__()   # important, call super's constructor
+
+    async def handle(self, request, session_id, site_id, intent_name, slots):
+        return self.answer(session_id, site_id, "Thanks, I am fine")
+```
+
+
 ## Contents of `skill.json`
 
 The `skill.json` is a mandatory file containing meta info about your skill. It is used both during installation as well as when your skill is run.
@@ -75,7 +102,10 @@ It could look like the following:
     "name": "hss-s710-mood",
     "version": "1.0.0",
     "author": "Some Dude",
-    "intents": ["s710:howAreYou"]
+    "intents": ["s710:howAreYou"],
+    "shortDescription": "Some funny chatting",
+    "version": "1.0.0",
+    "language": "en_GB"
 }
 ```
 
@@ -111,15 +141,40 @@ The name of the author of the skill.
 
 An array of strings containing all intents the skill can handle.
 
-## Base class methods
+#### `shortDescription` (mandatory)
 
-In addition, `BaseSkill` provides several methods which aid in skill development.
+A short description of your skill. Will be shown in the HSS registry skill list.
+
+#### `version` (optional)
+
+A string describing your skill's version.
+
+#### `language` (mandatory)
+
+A four-letter code string determining your skill's default language.
+
+
+## Base class
+
+In addition, `BaseSkill` provides several methods and properties which aid in skill development.
+
+#### `BaseSkill.log`
+
+Logger object which can be used for logging.
+
+#### `BaseSkill.default_language`
+
+The default language as determined by the `BaseSkill` class (either from `skill.json` or the fallback `en_GB`).
+
+Can be changed by the skill implementation any time to affect the behaviour of the below mentioned methods.
 
 #### `def answer(session_id, site_id, response_message, lang)`
 
-The `answer`-method should be called after the intent has been fully handled. This method also allows to send a response-text, which will then be forwarded to the TTS the your voice assistant. 
+The `answer`-method should be called after the intent has been fully handled. This method also allows to send a response-text, which will then be forwarded to the TTS the your voice assistant.
 
 The parameters `session_id` and `site_id` should be the ones provided by `handle`, while the `text` parameter shall be the text which shall be asked by the voice assistant.
+
+If the `lang` parameter is not given, `BaseSkill.default_language` will be used.
 
 #### `def followup(session_id, site_id, question, lang, intent_filter = None)`
 
@@ -127,15 +182,21 @@ The `followup `-method should be called when the skill does not yet want to fini
 
 The parameters `session_id` and `site_id` should be the ones provided by `handle`, while the `question` parameter shall be the text which shall be asked by the voice assistant.
 
+If the `lang` parameter is not given, `BaseSkill.default_language` will be used.
+
 #### `async def say(text, siteId = None, lang = None)`
 
-The `say` coroutine can be used to trigger the voice assistant to say a given text using its TTS. There is no further session- or intent handling involved. 
+The `say` coroutine can be used to trigger the voice assistant to say a given text using its TTS. There is no further session- or intent handling involved.
+
+If the `lang` parameter is not given, `BaseSkill.default_language` will be used.
 
 Since `say` is a **coroutine**, it must be `await`-ed.
 
 #### `async def ask(text, siteId = None, lang = None, intent_filter = None)`
 
 The `ask` coroutine can be used to start a new session. This will usually cause the voice assistant to speak the provided `text` using its TTS, and then listen for intents. Recognized intents may then be processed again.
+
+If the `lang` parameter is not given, `BaseSkill.default_language` will be used.
 
 Optionally, an `intent_filter` (array of strings) can be given which will be forwarded to the voice assistant (see [hermes protocol docs](https://docs.snips.ai/reference/dialogue#start-session)).
 
@@ -165,38 +226,22 @@ Cancels an existing timer. If `True` is given for `strict`, an error message wil
 
 ```
     async def handle(self, request, session_id, site_id, intent_name, slots):
-    
+
         ... # skill handling code
-        
+
         # schedule timer in 10 seconds
 
         await self.timer(10, self.do_timer, "Can I ask you a question?", reschedule = True)
-        
+
         # finish intent handling
 
         return self.answer(session_id, site_id, response_message)
 
     async def do_timer(self, text):
-    
+
         # ask a question
-        
+
         await self.ask(text, siteId = "default", intent_filter = ["s710:confirm", "s710:reject"])
-```
-
-# Example
-
-A minimal example of a skill (myskill.py) might look as:
-
-
-```
-from hss_skill import hss
-
-class MoodSkill(hss.BaseSkill):
-    def __init__(self):
-        super().__init__()   # important, call super's constructor
-
-    async def handle(self, request, session_id, site_id, intent_name, slots):
-        return self.answer(session_id, site_id, "Thanks, I am fine")
 ```
 
 # Configuration
@@ -219,7 +264,7 @@ In code, you can access the configuration using the `BaseSkill`'s `cfg` member. 
 ```
     async def handle(self, request, session_id, site_id, intent_name, slots):
         return self.answer(session_id, site_id, self.cfg["skill"]["confirmation"])
-        
+
 ```
 
 # Skill installation

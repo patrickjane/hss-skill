@@ -38,16 +38,28 @@ class BaseSkill(metaclass=ABCMeta):
         self.config = None
         self.debug = False
         self.timer_task = None
+        self.default_language = "en_GB"
 
         try:
             root_path = os.path.abspath(sys.modules['__main__'].__file__).replace("main.py", "")
             self.config_path = os.path.join(root_path, "config.ini")
+            self.skill_json_path = os.path.join(root_path, "skill.json")
         except Exception as e:
             self.log.error("Setting config path failed ({})".format(e))
 
         if os.path.exists(self.config_path) and os.path.isfile(self.config_path):
             self.config = configparser.ConfigParser()
             self.config.read(self.config_path)
+
+        if os.path.exists(self.skill_json_path) and os.path.isfile(self.skill_json_path):
+            with open(self.skill_json_path) as json_file:
+                try:
+                    self.skill_json = json.load(json_file)
+                except Exception as e:
+                    self.log.warning("Failed to open '{}' ({})".format(self.skill_json_path, e))
+
+            if "language" in self.skill_json:
+                self.default_language = self.skill_json["language"]
 
         self.name = self.args["skill-name"]
         self.port = int(self.args["port"])
@@ -226,7 +238,7 @@ class BaseSkill(metaclass=ABCMeta):
                 "sessionId": session_id,
                 "siteId": site_id,
                 "text": response_message,
-                "lang": lang if lang else "en_GB"
+                "lang": lang if lang else self.default_language
             }
 
     # -------------------------------------------------------------------------
@@ -238,7 +250,7 @@ class BaseSkill(metaclass=ABCMeta):
                 "sessionId": session_id,
                 "siteId": site_id,
                 "question": question,
-                "lang": lang if lang else "en_GB",
+                "lang": lang if lang else self.default_language,
                 "intentFilter": intent_filter if intent_filter else None
             }
 
@@ -254,7 +266,7 @@ class BaseSkill(metaclass=ABCMeta):
         await self.rpc_client.execute("say",
                                     {
                                         "text": text,
-                                        "lang": lang if lang else "en_GB",
+                                        "lang": lang if lang else self.default_language,
                                         "siteId": siteId if siteId else None
                                     })
 
@@ -266,7 +278,7 @@ class BaseSkill(metaclass=ABCMeta):
         await self.rpc_client.execute("ask",
                                     {
                                         "text": text,
-                                        "lang": lang if lang else "en_GB",
+                                        "lang": lang if lang else self.default_language,
                                         "siteId": siteId if siteId else None,
                                         "intentFilter": intent_filter if intent_filter else None
                                     })
