@@ -38,6 +38,11 @@ If `sentences.ini` is provided, `hss-cli` will register the sentences at `rhassp
 
 Same applies to `slots.json`.
 
+In order to support multiple languages, a skill may have the following files instead of `slots.json` and `sentences.ini`: 
+
+- `slotsdict.[LANG].json` (multiple, one per language with `LANG` beeing the language code in lower case, e.g. "de_de")
+- `sentences.[LANG].ini` (multiple, one per language with `LANG` beeing the language code in lower case, e.g. "de_de") 
+
 ## Boilerplate
 
 Your `main.py` might be sufficient if it looks roughly like this:
@@ -63,13 +68,15 @@ requests>=2.22.0
 
 When developing skills, a subclass of `BaseSkill` **must** implement the **coroutine**:
 
-#### `async def handle(request, session_id, site_id, intent_name, slots)`
+#### `async def handle(request, session_id, site_id, intent_name, slots, mapped_slots)`
 
 A coroutine which is called every time an intent which was registered by your skill is recognized and should be answered.
 
 Usually, the parameters `intent_name` and `slots` might be sufficient, however the full original intent is provided in the `request` parameter, and `session_id` and `site_id` can be used to do session- and site-based intent handling.
 
 The implementation of this method should *usually* return with the execution of either `BaseSkill.answer` or `BaseSkill.followup` to finish intent handling (see below).
+
+To support multiple languages with one skill implementation, `mapped_slots` is provided, which contains each slot translated to a slot-identifier (instead of the raw slot string). See chapter "Multiple languages support".
 
 
 ### Example
@@ -151,7 +158,7 @@ A string describing your skill's version.
 
 #### `language` (mandatory)
 
-A four-letter code string determining your skill's default language.
+A four-letter code string determining your skill's default language. When the skill supports more than one language, this property shall be an array (e.g. `["de_DE", "en_GB"]`).
 
 
 ## Base class
@@ -164,9 +171,16 @@ Logger object which can be used for logging.
 
 #### `BaseSkill.default_language`
 
-The default language as determined by the `BaseSkill` class (either from `skill.json` or the fallback `en_GB`).
+The default language as determined by the `BaseSkill` class.
 
 Can be changed by the skill implementation any time to affect the behaviour of the below mentioned methods.
+
+The default language is determined in the follow way (and order):    
+
+- config.ini section `skill` parameter `language`
+- skill.json `language` property (first language, if `language` is an array)
+- fall back to `en_GB`
+
 
 #### `def answer(session_id, site_id, response_message, lang)`
 
@@ -225,7 +239,7 @@ Cancels an existing timer. If `True` is given for `strict`, an error message wil
 ### Example
 
 ```
-    async def handle(self, request, session_id, site_id, intent_name, slots):
+    async def handle(self, request, session_id, site_id, intent_name, slots, mapped_slots):
 
         ... # skill handling code
 
@@ -243,6 +257,65 @@ Cancels an existing timer. If `True` is given for `strict`, an error message wil
 
         await self.ask(text, siteId = "default", intent_filter = ["s710:confirm", "s710:reject"])
 ```
+
+### Multiple languages support
+
+In order to support more than one language, a skill might need the following:
+
+- sentences in all supported languages
+- slots in all supported languages
+- determination of current/active language
+- easy handling of language specific slots in the code
+
+`hss-skill` supports all of this, thus enabling developers to easily implement more than one language in their skills.
+
+#### sentences.ini
+
+In order to support more than one language, instead of providing a file named `sentences.ini`, provide one file per language, and include the language code (lowercase) in the filename:
+
+- `sentences.de_de.ini`
+- `sentences.en_gb.ini`
+
+#### slots
+
+In order to support more than one language, instead of providing a file named `slots.json`, provide one file per language, and include the language code (lowercase) in the filename. Also, the file does not contain arrays, but dictionary instead:
+
+- `slotsdict.de_de.json`
+- `slotsdict.en_gb.json`
+
+The idea is, that it will be cumbersome to work with the localized, language-specific slot strings in the code, when multiple languages are involved. Therefore, the `slotsdict.json` files provide a mapping from localized ("real") slots strings to slot-identifiers, which will be the same for every language. Those slot-identifiers will be provided to the `handle()` method in the `mapped_slots` parameters.
+
+The files might contain:
+
+```
+slotsdict.de_de.json:
+
+{
+   "relative_time": {
+      "now": ["jetzt", "gerade", "später", "nachher", "gegen später"],
+      "today": ["heute"],
+      "todayMorning": ["heute früh", "heute morgen"]
+   }
+}
+
+slotsdict.en_gb.json:
+
+{
+   "relative_time": {
+      "now": ["now", "right now", "later", "then", "towards later", "around later"],
+      "today": ["today"],
+      "todayMorning": ["this morning", "ealier today"]
+   }
+}
+```
+
+So, if, for example, a slot with the text "nachher" is recognized (with german language enable), `handle()` will receive `nachher` in the `slots` parameter, and `now` in the `mapped_slots` parameter.
+
+If a slot with the text "right now" is recognized (with english language enable), `handle()` will receive `right now` in the `slots` parameter, and `now` in the `mapped_slots` parameter.
+
+This means, that the skill implementation can rely on a language-independent slot-identifer (`now` in the above example) while still having access to the original, language-specific slot value (`nachher`/`right now`).
+
+When installing a skill with the above slot-dictionaries, `hss-cli` will still register slots as usual at the voice assistant. It will, however, only register the slots for the language which is selected upon installation.
 
 # Configuration
 

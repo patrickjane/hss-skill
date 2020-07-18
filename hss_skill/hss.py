@@ -34,11 +34,24 @@ class BaseSkill(metaclass=ABCMeta):
     def __init__(self):
         logger.Logger.static_init(None)
 
+        # variables
+
         self.args = self.parse_args()
         self.config = None
-        self.debug = False
+        self.debug = True if "debug" in self.args else False
+        self.develop = True if "develop" in self.args else False
         self.timer_task = None
-        self.default_language = "en_GB"
+        self.default_language = None
+        self.slot_dictionary = None
+        self.name = self.args["skill-name"]
+        self.port = int(self.args["port"])
+        self.parent_port = int(self.args["parent-port"]) if "parent-port" in self.args else None
+
+        # setup logger
+
+        self.log = logging.getLogger("skill:{}".format(self.name))
+
+        # determine absolute file paths for config.ini and skill.json
 
         try:
             root_path = os.path.abspath(sys.modules['__main__'].__file__).replace("main.py", "")
@@ -47,27 +60,52 @@ class BaseSkill(metaclass=ABCMeta):
         except Exception as e:
             self.log.error("Setting config path failed ({})".format(e))
 
+        # open config.ini, if present
+
         if os.path.exists(self.config_path) and os.path.isfile(self.config_path):
             self.config = configparser.ConfigParser()
             self.config.read(self.config_path)
 
-        if os.path.exists(self.skill_json_path) and os.path.isfile(self.skill_json_path):
-            with open(self.skill_json_path) as json_file:
+            # get language from config.ini
+
+            if "skill" in self.config and "language" in self.config["skill"]:
+                self.default_language = self.config["skill"]["language"]
+
+        # open skill.json (must be present)
+
+        with open(self.skill_json_path) as json_file:
+            self.skill_json = json.load(json_file)
+
+        # get default language from skill.json (if not configured in config.ini)
+
+        if "language" in self.skill_json and not self.default_language:
+            self.default_language = self.skill_json["language"]
+
+            if isinstance(self.default_language, list):
+                self.default_language = self.default_language[0]
+
+        # fall back to english if no language at all available
+
+        if not self.default_language:
+            self.default_language = "en_GB"
+
+        # build slot dictionary for current language, if present
+        # (map slotText -> slotIdent)
+
+        slot_dict_filename = "slotsdict.{}.json".format(self.default_language).lower()
+        slot_dict_filepath = os.path.join(root_path, slot_dict_filename)
+
+        if os.path.exists(slot_dict_filepath) and os.path.isfile(slot_dict_filepath):
+            slotdict_json = None
+
+            with open(slot_dict_filepath) as json_file:
                 try:
-                    self.skill_json = json.load(json_file)
+                    slotdict_json = json.load(json_file)
+
+                    self.slot_dictionary = { k: {v: key for key, values in sub_dict.items() for v in values}
+                                                for k, sub_dict in slotdict_json.items() }
                 except Exception as e:
-                    self.log.warning("Failed to open '{}' ({})".format(self.skill_json_path, e))
-
-            if "language" in self.skill_json:
-                self.default_language = self.skill_json["language"]
-
-        self.name = self.args["skill-name"]
-        self.port = int(self.args["port"])
-        self.parent_port = int(self.args["parent-port"]) if "parent-port" in self.args else None
-        self.log = logging.getLogger("skill:{}".format(self.name))
-
-        if "debug" in self.args:
-            self.debug = True
+                    self.log.warning("Failed to open '{}' ({})".format(slot_dict_filepath, e))
 
     # --------------------------------------------------------------------------
     # parse_args
@@ -93,6 +131,10 @@ class BaseSkill(metaclass=ABCMeta):
     # --------------------------------------------------------------------------
 
     def run(self):
+        if self.develop:
+            print("WARNING: Not starting develop mode (--develop was given)")
+            return
+
         self.rpc = rpc.RpcServer(self.port, self)
         self.rpc_client = rpc.RpcClient(self.parent_port)
 
@@ -177,6 +219,18 @@ class BaseSkill(metaclass=ABCMeta):
     # --------------------------------------------------------------------------
 
     async def on_request(self, request):
+        def slot_value(name, rawvalue):
+            if not self.slot_dictionary:
+                return rawvalue
+
+            if not name in self.slot_dictionary:
+                return rawvalue
+
+            if not rawvalue in self.slot_dictionary[name]:
+                return rawvalue
+
+            return self.slot_dictionary[name][rawvalue]
+
         if not "intent" in request or not "intentName" in request["intent"]:
             self.log.error("Received message without 'intentName', must skip")
             return False
@@ -188,6 +242,7 @@ class BaseSkill(metaclass=ABCMeta):
         site_id = request["siteId"] if "siteId" in request else None
         slots = request["slots"] if "slots" in request else None
         slots_dict = {}
+        mapped_slots = {}
 
         # some convenience preparation for slots
 
@@ -200,18 +255,31 @@ class BaseSkill(metaclass=ABCMeta):
                     else:
                         slots_dict[slot["slotName"]] = [slot["value"]["value"]]
 
-                # recude single-value slots to literal. keep other slots as list-value
+                    # mapped slots is an additional map which holds the slotIdentifier instead of the raw language specific slot text
+                    # the slotIdentifier is meant to be equal in all languages supported by the skill
+
+                    if slot["slotName"] in mapped_slots:
+                        mapped_slots[slot["slotName"]].append(
+                            slot_value(slot["entity"], slot["value"]["value"]))
+                    else:
+                        mapped_slots[slot["slotName"]] = [slot_value(slot["entity"], slot["value"]["value"])]
+
+                # recode single-value slots to literal. keep other slots as list-value
 
                 for slot in slots_dict:
                     if len(slots_dict[slot]) == 1:
                         slots_dict[slot] = slots_dict[slot][0]
+
+                for slot in mapped_slots:
+                    if len(mapped_slots[slot]) == 1:
+                        mapped_slots[slot] = mapped_slots[slot][0]
 
             except Exception as e:
                 self.log.error(
                     "Failed to parse slots in JSON request, must skip request ({})".format(e))
                 return False
 
-        return await self.handle(request, session_id, site_id, intent_name, slots_dict)
+        return await self.handle(request, session_id, site_id, intent_name, slots_dict, mapped_slots)
 
     # -------------------------------------------------------------------------
     # server -> skill RPC
@@ -222,7 +290,7 @@ class BaseSkill(metaclass=ABCMeta):
     # --------------------------------------------------------------------------
 
     @abstractmethod
-    async def handle(self, request, session_id, site_id, intent_name, slots):
+    async def handle(self, request, session_id, site_id, intent_name, slots, mapped_slots):
         pass
 
     # -------------------------------------------------------------------------
