@@ -111,7 +111,6 @@ It could look like the following:
     "author": "Some Dude",
     "intents": ["s710:howAreYou"],
     "shortDescription": "Some funny chatting",
-    "version": "1.0.0",
     "language": "en_GB"
 }
 ```
