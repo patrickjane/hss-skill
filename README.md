@@ -91,7 +91,7 @@ class MoodSkill(hss.BaseSkill):
     def __init__(self):
         super().__init__()   # important, call super's constructor
 
-    async def handle(self, request, session_id, site_id, intent_name, slots):
+    async def handle(self, request, session_id, site_id, intent_name, slots, mapped_slots):
         return self.answer(session_id, site_id, "Thanks, I am fine")
 ```
 
@@ -334,7 +334,7 @@ confirmation = I am okay, what about you?
 In code, you can access the configuration using the `BaseSkill`'s `cfg` member. It will be a dictionary object resembling your configuration.
 
 ```
-    async def handle(self, request, session_id, site_id, intent_name, slots):
+    async def handle(self, request, session_id, site_id, intent_name, slots, mapped_slots):
         return self.answer(session_id, site_id, self.cfg["skill"]["confirmation"])
 
 ```
